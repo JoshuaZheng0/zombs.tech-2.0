@@ -4,7 +4,7 @@ import { BufferGeometryUtils, PointerLockControls } from 'three/examples/jsm/Add
 import { JumpComponent, PositionComponent, FiringComponent, WASDComponent, DeltaTimeComponent, QuantizedAngleComponent, AngleComponent, MeshComponent, HealthComponent, AliveComponent, HitDetectionComponent, KillsComponent } from './game/interface';
 import { Entity } from './game/entity'
 import { World } from './game/world'
-
+import { wallMap } from './game/wall_map'
 let world: World; // Represents the game world
 let controls: PointerLockControls; // Handles mouse pointer lock and camera controls for first-person movement
 let scene: THREE.Scene; // The main 3D scene where all objects are added
@@ -49,7 +49,7 @@ function initWorld() {
 
   // 4. Set up environment (lighting, camera, etc.)
   scene = new THREE.Scene()
-  scene.background = new THREE.Color(0x0a0a0a)
+  scene.background = new THREE.Color(0x87CEEB)
 
   setupLighting();
   setupCamera();
@@ -66,6 +66,7 @@ function initWorld() {
 //_____________________WEBSOCKET SETUP_____________________
 // Create a WebSocket connection to the server
 const socket = new WebSocket('ws://localhost:3000');
+
 
 // Set the WebSocket's binary type to ArrayBuffer to handle binary data
 socket.binaryType = 'arraybuffer';
@@ -122,6 +123,13 @@ function setupPlayer(camera: THREE.Camera): Entity {
 
     // Clamp pitch to prevent camera flipping
     angle.pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, angle.pitch));
+
+        // Normalize yaw to the range [-π, π]
+    if (angle.yaw > Math.PI) {
+      angle.yaw -= 2 * Math.PI;  // Wrap around to -π
+    } else if (angle.yaw < -Math.PI) {
+      angle.yaw += 2 * Math.PI;  // Wrap around to π
+    }
 
     // Convert yaw to 2 bytes (Q1.15)
     quantizedAngle.qyaw = Math.floor((angle.yaw / Math.PI) * 32768);
@@ -242,7 +250,7 @@ function createUI() {
 }
 
 function createEnvironment() {
-  createTerrain();
+  createTerrain(wallMap);
 }
 
 // player setup
@@ -266,73 +274,131 @@ function setupEnemy(id: number, position: { x: number, y: number, z: number }, q
 }
 
 //____________________MESH FUNCTIONS____________________
-function createTerrain() {
-  // Array to hold all individual cube geometries
-  const cubes: THREE.BufferGeometry[] = [];
+function createTerrain(wallMap: number[][]) {
+  // Arrays to hold wall, ground, tree, and rock geometries
+  const wallGeometries: THREE.BufferGeometry[] = [];
+  const groundGeometries: THREE.BufferGeometry[] = [];
+  const treeGeometries: THREE.BufferGeometry[] = [];
+  const rockGeometries: THREE.BufferGeometry[] = [];
+  
+  const width = wallMap.length;  // 100
+  const height = wallMap[0].length;  // 100
 
-  // Loop through a grid of positions from -50 to 49 on X and Z axes
-  for (let x = -50; x < 50; x++) {
-    for (let z = -50; z < 50; z++) {
+  // Loop through the grid based on the wallMap dimensions
+  for (let x = 0; x < width; x++) {
+    for (let z = 0; z < height; z++) {
 
-      // Random height between 0.1 and 0.6 for slight terrain variation
-      let height = Math.random() * 0.5 + 0.1;
+      const isBlocked = wallMap[x][z] === 1;  // Check if it's a wall tile
+      const isTreeSpot = wallMap[x][z] === 2;  // Check if it's a tree tile
+      const isRockSpot = wallMap[x][z] === 3;  // Check if it's a rock tile
 
-      // Create a box (cube) with the generated height
-      const geo = new THREE.BoxGeometry(1, height, 1);
+      // Calculate world position for this tile
+      const worldX = x - 50;  // Shifting to -50 to 50 range
+      const worldZ = z - 50;  // Shifting to -50 to 50 range
 
-      // Move the cube so that it rests on the ground (y = -1)
-      // height/2 puts the bottom at y=0, then subtract 1 to sit at y = -1
-      geo.translate(x, height / 2 - 1, z);
+      let height = 0;
+      let geometry: THREE.BufferGeometry;
 
-      // Store the geometry in the array for merging later
-      cubes.push(geo);
+      if (isBlocked) {
+        height = Math.random() * 1.5 + 4.5; // Random height variation for walls
+        geometry = new THREE.BoxGeometry(1, height, 1);
+        geometry.translate(worldX, height / 2, worldZ);  // Position the block
+        wallGeometries.push(geometry); // Add to wall geometries
+      } else {
+        height = Math.random() * 0.2 + 0.05; // Random height variation for terrain
+        geometry = new THREE.BoxGeometry(1, height, 1);
+        geometry.translate(worldX, height / 2, worldZ);  // Position the terrain cube
+        groundGeometries.push(geometry); // Add to ground geometries
+      }
+
+      // Add tree geometry if it's a tree spot
+      if (isTreeSpot) {
+        const treeTrunkHeight = Math.random() * 2 + 3; // Random tree trunk height
+        const treeTrunkGeo = new THREE.CylinderGeometry(0.1, 0.1, treeTrunkHeight, 8);
+        treeTrunkGeo.translate(worldX, treeTrunkHeight / 2, worldZ); // Position trunk
+        treeGeometries.push(treeTrunkGeo);
+
+        const treeCrownGeo = new THREE.SphereGeometry(1, 8, 8); // Simple sphere for tree crown
+        treeCrownGeo.translate(worldX, treeTrunkHeight + 1, worldZ); // Position crown
+        treeGeometries.push(treeCrownGeo);
+      }
+
+      // Add rock geometry if it's a rock spot
+      if (isRockSpot) {
+        const rockGeo = new THREE.SphereGeometry(0.5, 8, 8); // Simple rock using sphere
+        rockGeo.translate(worldX, 0.25, worldZ); // Position rock
+        rockGeometries.push(rockGeo);
+      }
     }
   }
 
-  // Merge all cube geometries into one big geometry to reduce draw calls (better performance)
-  const merged = BufferGeometryUtils.mergeGeometries(cubes);
-
-  // Load a texture to apply to the terrain
-  const loader = new THREE.TextureLoader();
-  let floor: THREE.Mesh;
-
-  // Once the texture is loaded, create a mesh with it and add it to the scene
-  loader.load('/images/ground.jpg', (texture) => {
-    // Apply the texture as the material map
-    const material = new THREE.MeshStandardMaterial({ map: texture });
-
-    // Create a mesh using the merged terrain geometry and textured material
-    floor = new THREE.Mesh(merged, material);
-
-    // Enable shadows for realism
-    floor.receiveShadow = false;
-
-    // Add the terrain mesh to the scene
-    scene.add(floor);
-  });
+  if (wallGeometries.length > 0) {
+    const mergedWallGeometry = BufferGeometryUtils.mergeGeometries(wallGeometries);
+    const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513 });
+    const wallMesh = new THREE.Mesh(mergedWallGeometry, wallMaterial);
+    scene.add(wallMesh);
+  }
+  
+  if (groundGeometries.length > 0) {
+    const mergedGroundGeometry = BufferGeometryUtils.mergeGeometries(groundGeometries);
+    const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
+    const groundMesh = new THREE.Mesh(mergedGroundGeometry, groundMaterial);
+    scene.add(groundMesh);
+  }
+  
+  if (treeGeometries.length > 0) {
+    const mergedTreeGeometry = BufferGeometryUtils.mergeGeometries(treeGeometries);
+    const treeMaterial = new THREE.MeshStandardMaterial({ color: 0x228B22 });
+    const treeMesh = new THREE.Mesh(mergedTreeGeometry, treeMaterial);
+    scene.add(treeMesh);
+  }
+  
+  if (rockGeometries.length > 0) {
+    const mergedRockGeometry = BufferGeometryUtils.mergeGeometries(rockGeometries);
+    const rockMaterial = new THREE.MeshStandardMaterial({ color: 0xA9A9A9 });
+    const rockMesh = new THREE.Mesh(mergedRockGeometry, rockMaterial);
+    scene.add(rockMesh);
+  }
 }
 
+
 function createCharacterMesh(): MeshComponent {
-  // Create a capsule-like player shape (or cube for simplicity)
-  const geometry = new THREE.CapsuleGeometry(0.3, 1.2, 4, 8); // radius, length, cap segments
-  const material = new THREE.MeshStandardMaterial({ color: 0x00aaff });
+  const geometries: THREE.BufferGeometry[] = [];
 
-  const mesh = new THREE.Mesh(geometry, material);
+  // Body (thicker and taller, with caps)
+  const bodyGeometry = new THREE.CylinderGeometry(0.5, 0.5, 1, 32, 16, false); // false = has caps
+  bodyGeometry.translate(0, 0, 0);
+  geometries.push(bodyGeometry);
 
-  // Optional: set initial position
-  mesh.position.set(0, 1.6, 0);
+  // Eyes
+  const eyeGeometry = new THREE.SphereGeometry(0.05, 8, 8);
+  const eye1 = eyeGeometry.clone();
+  eye1.translate(-0.15, 0.25, 0.48); // Front-facing
+  geometries.push(eye1);
 
-  // Enable shadow if you're using lights/shadows
+  const eye2 = eyeGeometry.clone();
+  eye2.translate(0.15, 0.25, 0.48);
+  geometries.push(eye2);
+
+  // Merge geometries
+  const mergedGeometry = BufferGeometryUtils.mergeGeometries(geometries);
+  const material = new THREE.MeshStandardMaterial({ color: 0xffffff });
+
+  const mesh = new THREE.Mesh(mergedGeometry, material);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
+  mesh.scale.set(1.6,1.6,1.6); // x, y, z
 
   return new MeshComponent(mesh);
 }
 
+
+
+
 //_____________________HELPER FUNCTIONS INIT____________________
 
 // Handle mouse click (shooting)
-function onMouseClick(event: MouseEvent) {
+function onMouseClick() {
   if (world.gameState.gameOver) {
     return;
   }
@@ -347,7 +413,7 @@ function onMouseClick(event: MouseEvent) {
 }
 
 // Handle mouse up (stop shooting)
-function onMouseUp(event: MouseEvent) {
+function onMouseUp() {
 
   const firingComponent = world.getEntityById(1)?.getComponent(FiringComponent);
   if (firingComponent) {
@@ -477,12 +543,15 @@ function renderEnemies(world: World): void {
       // Update position
       mesh.mesh.position.set(position.x, position.y, position.z);
 
+      console.log(`Yaw: ${angle.qyaw}, Pitch: ${angle.qpitch}`);
       // Convert quantized angles (0-255) to radians (0 - 2π)
-      const pitch = (angle.qpitch / 255) * 2 * Math.PI;
-      const yaw = (angle.qyaw / 255) * 2 * Math.PI;
+      // Reverse yaw (Q1.15 format)
+      const yaw = ((angle.qyaw / 255) * 2 * Math.PI);
+      // Reverse pitch (0-255 range)
+      const pitch = ((angle.qpitch / 255) * Math.PI) - (Math.PI / 2);
 
       // Update rotation — adjust axes based on your model orientation
-      mesh.mesh.rotation.set(pitch, yaw, 0); // or use Euler if needed: new THREE.Euler(pitch, yaw, 0)
+      mesh.mesh.rotation.set(-pitch, yaw, 0, 'YXZ');// or use Euler if needed: new THREE.Euler(pitch, yaw, 0)
 
     }
   }
@@ -566,7 +635,7 @@ function logAllEntities(world: World): void {
       logLine += parts.join(" | ");
     }
 
-    console.log(logLine);
+    //console.log(logLine);
   });
 }
 
