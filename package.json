@@ -18,6 +18,8 @@
     "vite": "^6.2.0"
   },
   "dependencies": {
-    "three": "^0.175.0"
+    "@dimforge/rapier3d-compat": "^0.15.1",
+    "three": "^0.175.0",
+    "yy-fps": "^2.0.1"
   }
 }

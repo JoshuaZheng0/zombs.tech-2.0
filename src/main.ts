@@ -5,14 +5,17 @@ import { JumpComponent, PositionComponent, FiringComponent, WASDComponent, Delta
 import { Entity } from './game/entity'
 import { World } from './game/world'
 import { wallMap } from './game/wall_map'
+import { PhysicsSystem } from './game/physics'
+import * as RAPIER from '@dimforge/rapier3d-compat'
+import { FPS } from 'yy-fps'
+
+const fps = new FPS()
 let world: World; // Represents the game world
 let controls: PointerLockControls; // Handles mouse pointer lock and camera controls for first-person movement
 let scene: THREE.Scene; // The main 3D scene where all objects are added
 let renderer: THREE.WebGLRenderer; // Renders the scene using WebGL
 let camera: THREE.PerspectiveCamera; // Perspective camera used for 3D rendering
-let fpsCounter: HTMLDivElement; // HTML element used to display frames per second
-let frameCount = 0; // Counts the number of frames rendered
-let lastFpsUpdate = 0; // Timestamp of the last FPS update
+let physicsSystem: PhysicsSystem; // Rapier physics system
 
 // Add variables to track camera rotation
 let currentCameraQuaternion = new THREE.Quaternion(); // The current rotation of the camera, used for interpolation
@@ -24,14 +27,16 @@ let direction = new THREE.Vector3();;
 
 //_____________________GAME INITIALIZATION_____________________
 // Ensure the game world is initialized only after the page has fully loaded
-window.onload = () => {
+window.onload = async () => {
+  // Initialize Rapier
+  await RAPIER.init();
 
   initWorld();
 
   socket.onmessage = (event) => {
     decodeWorldData(event.data, world);
   };
-  
+
   // Start render loop
   requestAnimationFrame(animate);
 };
@@ -46,8 +51,11 @@ function initWorld() {
   // 3. Add entities to the world
   world.addEntity(player);
 
+  // 4. Initialize physics system
+  physicsSystem = new PhysicsSystem(world);
+  physicsSystem.initPlayer(player);
 
-  // 4. Set up environment (lighting, camera, etc.)
+  // 5. Set up environment (lighting, camera, etc.)
   scene = new THREE.Scene()
   scene.background = new THREE.Color(0x87CEEB)
 
@@ -57,7 +65,7 @@ function initWorld() {
   createUI();
   createEnvironment();
 
-  // 5.Set up event listeners
+  // 6. Set up event listeners
   window.addEventListener('resize', onWindowResize);
   document.addEventListener('mousedown', onMouseClick);
   document.addEventListener('mouseup', onMouseUp);
@@ -66,7 +74,7 @@ function initWorld() {
 //_____________________WEBSOCKET SETUP_____________________
 // Create a WebSocket connection to the server
 const socket = new WebSocket('ws://localhost:3000');
-
+//const socket = new WebSocket('wss://7dbd-129-2-89-62.ngrok-free.app');
 
 // Set the WebSocket's binary type to ArrayBuffer to handle binary data
 socket.binaryType = 'arraybuffer';
@@ -98,7 +106,7 @@ function setupPlayer(camera: THREE.Camera): Entity {
   const player = new Entity(1); // You can use a global ID generator if needed
 
   // Attach components
-  player.addComponent(new PositionComponent(0, 1.6, 0));
+  player.addComponent(new PositionComponent(0, 1.6, 0)); // Set initial height to 1.6
   player.addComponent(new WASDComponent(false, false, false, false));
   player.addComponent(new JumpComponent(false));
   player.addComponent(new FiringComponent(false));
@@ -124,7 +132,7 @@ function setupPlayer(camera: THREE.Camera): Entity {
     // Clamp pitch to prevent camera flipping
     angle.pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, angle.pitch));
 
-        // Normalize yaw to the range [-π, π]
+    // Normalize yaw to the range [-π, π]
     if (angle.yaw > Math.PI) {
       angle.yaw -= 2 * Math.PI;  // Wrap around to -π
     } else if (angle.yaw < -Math.PI) {
@@ -164,7 +172,6 @@ function setupPlayer(camera: THREE.Camera): Entity {
         break;
       case 'Space':
         if (!jump.jump) {
-          world.gameState.verticalVelocity = world.gameState.jumpForce;
           jump.jump = true;
         }
         break;
@@ -204,15 +211,12 @@ function setupPlayer(camera: THREE.Camera): Entity {
 // Set up scene lighting
 function setupLighting() {
   // Ambient light
-  const ambientLight = new THREE.AmbientLight(0x404040, 1.5);
+  const ambientLight = new THREE.AmbientLight(0x404040, 2.5); // Increased intensity to compensate for no shadows
   scene.add(ambientLight);
 
-  // Directional light (sun)
-  const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+  // Directional light (sun) - simplified without shadows
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
   directionalLight.position.set(5, 10, 7);
-  directionalLight.castShadow = true;
-  directionalLight.shadow.mapSize.width = 1024;
-  directionalLight.shadow.mapSize.height = 1024;
   scene.add(directionalLight);
 }
 // camera setup
@@ -229,24 +233,11 @@ function setupRenderer() {
   renderer = new THREE.WebGLRenderer({ antialias: true })
   renderer.setPixelRatio(window.devicePixelRatio)
   renderer.setSize(window.innerWidth, window.innerHeight)
-  renderer.shadowMap.enabled = true
   document.body.appendChild(renderer.domElement)
 }
 
 function createUI() {
-  // Create FPS counter
-  fpsCounter = document.createElement('div');
-  fpsCounter.style.position = 'absolute';
-  fpsCounter.style.top = '10px';
-  fpsCounter.style.right = '10px';
-  fpsCounter.style.color = 'white';
-  fpsCounter.style.fontFamily = 'Arial, sans-serif';
-  fpsCounter.style.fontSize = '16px';
-  fpsCounter.style.fontWeight = 'bold';
-  fpsCounter.style.textShadow = '1px 1px 2px black';
-  fpsCounter.style.zIndex = '1000';
-  fpsCounter.textContent = 'FPS: 0';
-  document.body.appendChild(fpsCounter);
+
 }
 
 function createEnvironment() {
@@ -280,50 +271,46 @@ function createTerrain(wallMap: number[][]) {
   const groundGeometries: THREE.BufferGeometry[] = [];
   const treeGeometries: THREE.BufferGeometry[] = [];
   const rockGeometries: THREE.BufferGeometry[] = [];
-  
-  const width = wallMap.length;  // 100
-  const height = wallMap[0].length;  // 100
+
+  const width = wallMap.length;
+  const height = wallMap[0].length;
 
   // Loop through the grid based on the wallMap dimensions
   for (let x = 0; x < width; x++) {
     for (let z = 0; z < height; z++) {
+      const isBlocked = wallMap[x][z] === 1;
+      const isTreeSpot = wallMap[x][z] === 2;
+      const isRockSpot = wallMap[x][z] === 3;
 
-      const isBlocked = wallMap[x][z] === 1;  // Check if it's a wall tile
-      const isTreeSpot = wallMap[x][z] === 2;  // Check if it's a tree tile
-      const isRockSpot = wallMap[x][z] === 3;  // Check if it's a rock tile
-
-      // Calculate world position for this tile
-      const worldX = x - 50;  // Shifting to -50 to 50 range
-      const worldZ = z - 50;  // Shifting to -50 to 50 range
+      const worldX = x - 50;
+      const worldZ = z - 50;
 
       let height = 0;
       let geometry: THREE.BufferGeometry;
 
       if (isBlocked) {
-        height = Math.random() * 1.5 + 4.5; // Random height variation for walls
+        height = Math.random() * 1.5 + 4.5;
         geometry = new THREE.BoxGeometry(1, height, 1);
-        geometry.translate(worldX, height / 2, worldZ);  // Position the block
-        wallGeometries.push(geometry); // Add to wall geometries
+        geometry.translate(worldX, height / 2, worldZ);
+        wallGeometries.push(geometry);
       } else {
-        height = Math.random() * 0.2 + 0.05; // Random height variation for terrain
+        height = Math.random() * 0.2 + 0.05;
         geometry = new THREE.BoxGeometry(1, height, 1);
-        geometry.translate(worldX, height / 2, worldZ);  // Position the terrain cube
-        groundGeometries.push(geometry); // Add to ground geometries
+        geometry.translate(worldX, height / 2, worldZ);
+        groundGeometries.push(geometry);
       }
 
-      // Add tree geometry if it's a tree spot
       if (isTreeSpot) {
-        const treeTrunkHeight = Math.random() * 2 + 3; // Random tree trunk height
-        const treeTrunkGeo = new THREE.CylinderGeometry(0.1, 0.1, treeTrunkHeight, 8);
-        treeTrunkGeo.translate(worldX, treeTrunkHeight / 2, worldZ); // Position trunk
+        const treeTrunkHeight = Math.random() * 2 + 3;
+        const treeTrunkGeo = new THREE.CylinderGeometry(0.1, 0.1, treeTrunkHeight, 6, 1); // Reduced segments
+        treeTrunkGeo.translate(worldX, treeTrunkHeight / 2, worldZ);
         treeGeometries.push(treeTrunkGeo);
 
-        const treeCrownGeo = new THREE.SphereGeometry(1, 8, 8); // Simple sphere for tree crown
-        treeCrownGeo.translate(worldX, treeTrunkHeight + 1, worldZ); // Position crown
+        const treeCrownGeo = new THREE.SphereGeometry(1, 6, 6); // Reduced segments
+        treeCrownGeo.translate(worldX, treeTrunkHeight + 1, worldZ);
         treeGeometries.push(treeCrownGeo);
       }
 
-      // Add rock geometry if it's a rock spot
       if (isRockSpot) {
         const rockGeo = new THREE.SphereGeometry(0.5, 8, 8); // Simple rock using sphere
         rockGeo.translate(worldX, 0.25, worldZ); // Position rock
@@ -332,30 +319,33 @@ function createTerrain(wallMap: number[][]) {
     }
   }
 
+  // Create simplified materials
+  const wallMaterial = new THREE.MeshLambertMaterial({ color: 0x8B4513 }); // Using MeshLambertMaterial instead of MeshStandardMaterial
+  const groundMaterial = new THREE.MeshLambertMaterial({ color: 0x00ff00 });
+  const treeMaterial = new THREE.MeshLambertMaterial({ color: 0x228B22 });
+  const rockMaterial = new THREE.MeshLambertMaterial({ color: 0xA9A9A9 });
+
+  // Merge and add geometries with optimized materials
   if (wallGeometries.length > 0) {
     const mergedWallGeometry = BufferGeometryUtils.mergeGeometries(wallGeometries);
-    const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513 });
     const wallMesh = new THREE.Mesh(mergedWallGeometry, wallMaterial);
     scene.add(wallMesh);
   }
-  
+
   if (groundGeometries.length > 0) {
     const mergedGroundGeometry = BufferGeometryUtils.mergeGeometries(groundGeometries);
-    const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
     const groundMesh = new THREE.Mesh(mergedGroundGeometry, groundMaterial);
     scene.add(groundMesh);
   }
-  
+
   if (treeGeometries.length > 0) {
     const mergedTreeGeometry = BufferGeometryUtils.mergeGeometries(treeGeometries);
-    const treeMaterial = new THREE.MeshStandardMaterial({ color: 0x228B22 });
     const treeMesh = new THREE.Mesh(mergedTreeGeometry, treeMaterial);
     scene.add(treeMesh);
   }
-  
+
   if (rockGeometries.length > 0) {
     const mergedRockGeometry = BufferGeometryUtils.mergeGeometries(rockGeometries);
-    const rockMaterial = new THREE.MeshStandardMaterial({ color: 0xA9A9A9 });
     const rockMesh = new THREE.Mesh(mergedRockGeometry, rockMaterial);
     scene.add(rockMesh);
   }
@@ -366,14 +356,14 @@ function createCharacterMesh(): MeshComponent {
   const geometries: THREE.BufferGeometry[] = [];
 
   // Body (thicker and taller, with caps)
-  const bodyGeometry = new THREE.CylinderGeometry(0.5, 0.5, 1, 32, 16, false); // false = has caps
+  const bodyGeometry = new THREE.CylinderGeometry(0.5, 0.5, 1, 16, 1, false); // Reduced segments
   bodyGeometry.translate(0, 0, 0);
   geometries.push(bodyGeometry);
 
   // Eyes
-  const eyeGeometry = new THREE.SphereGeometry(0.05, 8, 8);
+  const eyeGeometry = new THREE.SphereGeometry(0.05, 4, 4); // Reduced segments
   const eye1 = eyeGeometry.clone();
-  eye1.translate(-0.15, 0.25, 0.48); // Front-facing
+  eye1.translate(-0.15, 0.25, 0.48);
   geometries.push(eye1);
 
   const eye2 = eyeGeometry.clone();
@@ -382,12 +372,14 @@ function createCharacterMesh(): MeshComponent {
 
   // Merge geometries
   const mergedGeometry = BufferGeometryUtils.mergeGeometries(geometries);
-  const material = new THREE.MeshStandardMaterial({ color: 0xffffff });
+  const material = new THREE.MeshStandardMaterial({ 
+    color: 0xffffff,
+    roughness: 1, // Simplified material properties
+    metalness: 0
+  });
 
   const mesh = new THREE.Mesh(mergedGeometry, material);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  mesh.scale.set(1.6,1.6,1.6); // x, y, z
+  mesh.scale.set(1.6, 1.6, 1.6);
 
   return new MeshComponent(mesh);
 }
@@ -429,11 +421,9 @@ function onWindowResize() {
 }
 
 function updateMovement(playerEntity: Entity, deltaTime: number) {
-  const wasd = playerEntity.getComponent(WASDComponent);
   const angle = playerEntity.getComponent(AngleComponent);
-  const jump = playerEntity.getComponent(JumpComponent);
-  const position = playerEntity.getComponent(PositionComponent);
   const quantizedAngle = playerEntity.getComponent(QuantizedAngleComponent);
+  const position = playerEntity.getComponent(PositionComponent);
 
   if (!angle || !position || !quantizedAngle) return;
 
@@ -443,7 +433,6 @@ function updateMovement(playerEntity: Entity, deltaTime: number) {
   // Convert quantized pitch (1 byte) back to radians
   let originalPitch = ((quantizedAngle.qpitch / 255) * Math.PI) - (Math.PI / 2); // Reversed scaling for 0–255 range to -π/2 to π/2
 
-
   // Calculate direction vector from pitch and yaw
   direction.x = Math.sin(originalYaw) * Math.cos(originalPitch);
   direction.y = Math.sin(originalPitch);
@@ -452,47 +441,13 @@ function updateMovement(playerEntity: Entity, deltaTime: number) {
   // Normalize the direction vector
   direction.normalize();
 
-  // Create 2D direction for movement (ignoring vertical component)
-  const dir2D = new THREE.Vector2(direction.x, direction.z).normalize();
-
   // Apply smooth camera rotation using slerp
   updateCameraRotation(deltaTime, originalPitch, originalYaw);
 
-  // Calculate the right vector in 2D space
-  const right2D = new THREE.Vector2(-dir2D.y, dir2D.x);
+  // Apply physics-based movement
+  physicsSystem.applyPlayerMovement(playerEntity, deltaTime);
 
-  // Movement vector (2D)
-  let move2D = new THREE.Vector2();
-
-  if (wasd?.forward) move2D.sub(dir2D);
-  if (wasd?.backward) move2D.add(dir2D);
-  if (wasd?.left) move2D.add(right2D);
-  if (wasd?.right) move2D.sub(right2D);
-
-  if (move2D.lengthSq() > 0) {
-    move2D.normalize().multiplyScalar(world.gameState.moveSpeed * (deltaTime / 16));
-    position.x += move2D.x;
-    position.z += move2D.y;
-  }
-
-  // Vertical (Y-axis) movement
-  if (jump) {
-    world.gameState.verticalVelocity -= world.gameState.gravity;
-    position.y += world.gameState.verticalVelocity * (deltaTime / 16);
-  }
-
-  // Floor collision
-  if (position.y < 1.6) {
-    position.y = 1.6;
-    world.gameState.verticalVelocity = 0;
-    if (jump) jump.jump = false;
-  }
-
-  // Clamp to map boundaries
-  position.x = Math.max(-50, Math.min(50, position.x));
-  position.z = Math.max(-50, Math.min(50, position.z));
-
-  // ✅ LERP the camera position to smooth out movement
+  // Update camera position to match player position
   const lerpFactor = 0.2; // Try 0.1–0.2 for subtle smoothing
   camera.position.lerp(
     new THREE.Vector3(position.x, position.y, position.z),
@@ -540,22 +495,21 @@ function renderEnemies(world: World): void {
     const mesh = entity.getComponent(MeshComponent);
 
     if (position && angle && mesh) {
-      // Update position
-      mesh.mesh.position.set(position.x, position.y, position.z);
+      // === LERP Position ===
+      const targetPos = new THREE.Vector3(position.x, position.y, position.z);
+      mesh.mesh.position.lerp(targetPos, 0.1); // 0.1 is the smoothing factor
 
-      console.log(`Yaw: ${angle.qyaw}, Pitch: ${angle.qpitch}`);
-      // Convert quantized angles (0-255) to radians (0 - 2π)
-      // Reverse yaw (Q1.15 format)
-      const yaw = ((angle.qyaw / 255) * 2 * Math.PI);
-      // Reverse pitch (0-255 range)
-      const pitch = ((angle.qpitch / 255) * Math.PI) - (Math.PI / 2);
+      // === Convert Quantized Angles to Radians ===
+      const yaw = (angle.qyaw / 255) * 2 * Math.PI;
+      const pitch = (angle.qpitch / 255) * Math.PI - Math.PI / 2;
 
-      // Update rotation — adjust axes based on your model orientation
-      mesh.mesh.rotation.set(-pitch, yaw, 0, 'YXZ');// or use Euler if needed: new THREE.Euler(pitch, yaw, 0)
-
+      // === SLERP Rotation ===
+      const targetQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(-pitch, yaw, 0, 'YXZ'));
+      mesh.mesh.quaternion.slerp(targetQuat, 0.1); // smooth rotation
     }
   }
 }
+
 
 
 
@@ -566,47 +520,33 @@ const interval = 16;
 
 function animate(currentTime: number) {
   requestAnimationFrame(animate); // Schedule the next frame
+  fps.frame()
 
-  try {
-    const deltaTime = Math.floor(currentTime - lastTime);
+  const deltaTime = Math.floor(currentTime - lastTime);
 
-    // Update FPS counter
-    frameCount++;
-    if (currentTime - lastFpsUpdate >= 1000) {
-      const fps = Math.round((frameCount * 1000) / (currentTime - lastFpsUpdate));
-      fpsCounter.textContent = `FPS: ${fps}`;
-      frameCount = 0;
-      lastFpsUpdate = currentTime;
-    }
+  lastTime = currentTime - (deltaTime % interval); // Adjust for drift
 
-    // Only update if enough time has passed to maintain 60 FPS
-    if (deltaTime >= interval) {
-      lastTime = currentTime - (deltaTime % interval); // Adjust for drift
+  // Update game logic
+  const time = world.getEntityById(1)?.getComponent(DeltaTimeComponent);
+  if (time) time.deltaTime = deltaTime;
 
-      // Optionally, clamp deltaTime to avoid extreme values
-      const MIN_DELTA_TIME = 16; // Minimum deltaTime (about 60 FPS)
-      const MAX_DELTA_TIME = 250; // Maximum deltaTime (about 10 FPS)
-      const clampedDeltaTime = Math.max(MIN_DELTA_TIME, Math.min(deltaTime, MAX_DELTA_TIME));
+  if (!world.gameState.gameOver && controls.isLocked) {
+    const player = world.getEntityById(1);
+    if (!player) return;
 
-      // Update game logic
-      const time = world.getEntityById(1)?.getComponent(DeltaTimeComponent);
-      if (time) time.deltaTime = clampedDeltaTime;
+    // Update physics
+    physicsSystem.update(deltaTime);
 
-      if (!world.gameState.gameOver && controls.isLocked) {
-        const player = world.getEntityById(1);
-        if (!player) return;
-        updateMovement(player, clampedDeltaTime);
-        logAllEntities(world);
-        renderEnemies(world);
-        sendInput(); // Uncomment if necessary
-      }
-
-      // Render the scene
-      renderer.render(scene, camera);
-    }
-  } catch (error) {
-    console.error('Error in animation loop:', error);
+    // Update movement and camera
+    updateMovement(player, deltaTime);
+    logAllEntities(world);
+    renderEnemies(world);
+    sendInput(); // Uncomment if necessary
   }
+
+  // Render the scene
+  renderer.render(scene, camera);
+
 }
 
 function logAllEntities(world: World): void {
@@ -803,5 +743,15 @@ function decodeWorldData(buffer: ArrayBuffer, world: World): void {
 
 
 //_____________________SERVER -> CLIENT END_____________________
+
+// Clean up resources when the page is unloaded
+window.addEventListener('beforeunload', () => {
+  if (physicsSystem) {
+    physicsSystem.cleanup();
+  }
+});
+
+
+
 
 

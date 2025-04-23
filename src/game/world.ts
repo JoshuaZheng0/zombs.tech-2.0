@@ -12,8 +12,8 @@ export class World {
   gameOver: false,
   lastShot: 0,
   shootCooldown: 130,
-  moveSpeed: 0.2,
-  jumpForce: 0.25,
+  moveSpeed: 20,
+  jumpForce: 60,
   gravity: 0.02,
   verticalVelocity: 0,
   // Ability cooldowns and states
