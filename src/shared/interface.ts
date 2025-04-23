@@ -84,3 +84,44 @@ export class KillsComponent {
         return `kills(${this.kills})`;
     }
 }
+
+export class AngleChangedComponent {
+    constructor(public angleChanged: boolean = false) {}
+
+    toString(): string {
+        return `AngleChangedComponent(angleChanged: ${this.angleChanged})`;
+    }
+}
+
+export class HealthChangedComponent {
+    constructor(public healthChanged: boolean = false) {}
+
+    toString(): string {
+        return `HealthChangedComponent(healthChanged: ${this.healthChanged})`;
+    }
+}
+
+export class KillsChangedComponent {
+    constructor(public killsChanged: boolean = false) {}
+
+    toString(): string {
+        return `KillsChangedComponent(killsChanged: ${this.killsChanged})`;
+    }
+}
+
+export class WebSocketComponent {
+    constructor(public socket: any) {}
+  
+    toString(): string {
+      return `WebSocketComponent(protocol: ${this.socket.protocol}, readyState: ${this.socket.readyState})`;
+    }
+  }
+
+  export class PositionChangedComponent {
+    constructor(public positionChanged: boolean = false) {}
+
+    toString(): string {
+        return `PositionChangedComponent(positionChanged: ${this.positionChanged})`;
+    }
+}
+

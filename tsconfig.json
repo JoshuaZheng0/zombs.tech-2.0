@@ -5,20 +5,31 @@
     "module": "ESNext",
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
 
-    /* Bundler mode */
+    /* Bundler mode (Vite handles bundling) */
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "isolatedModules": true,
     "moduleDetection": "force",
-    "noEmit": true,
+    "noEmit": true, // Vite handles emission, this is for type checking
 
     /* Linting */
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": true
+    "noUncheckedSideEffectImports": true,
+
+    /* Path Aliases (Optional but helpful for monorepos) */
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["src/shared/*"],
+      "@client/*": ["src/client/*"]
+      // No need for @server alias on client side
+    }
   },
-  "include": ["src"]
+  // Include client and shared for type checking
+  "include": ["src/client/**/*.ts", "src/shared/**/*.ts"]
 }

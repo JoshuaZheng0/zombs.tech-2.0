@@ -1,11 +1,10 @@
-import './style.css'
 import * as THREE from 'three'
 import { BufferGeometryUtils, PointerLockControls } from 'three/examples/jsm/Addons.js'
-import { JumpComponent, PositionComponent, FiringComponent, WASDComponent, DeltaTimeComponent, QuantizedAngleComponent, AngleComponent, MeshComponent, HealthComponent, AliveComponent, HitDetectionComponent, KillsComponent } from './game/interface';
-import { Entity } from './game/entity'
-import { World } from './game/world'
-import { wallMap } from './game/wall_map'
-import { PhysicsSystem } from './game/physics'
+import { JumpComponent, PositionComponent, FiringComponent, WASDComponent, DeltaTimeComponent, QuantizedAngleComponent, AngleComponent, MeshComponent, HealthComponent, AliveComponent, HitDetectionComponent, KillsComponent } from '../shared/interface';
+import { Entity } from '../shared/entity'
+import { World } from '../shared/world'
+import { wallMap } from '../shared/wall_map'
+import { PhysicsSystem } from '../shared/physics'
 import * as RAPIER from '@dimforge/rapier3d-compat'
 import { FPS } from 'yy-fps'
 
@@ -74,7 +73,7 @@ function initWorld() {
 //_____________________WEBSOCKET SETUP_____________________
 // Create a WebSocket connection to the server
 const socket = new WebSocket('ws://localhost:3000');
-//const socket = new WebSocket('wss://7dbd-129-2-89-62.ngrok-free.app');
+//const socket = new WebSocket('wss://e51b-129-2-89-62.ngrok-free.app');
 
 // Set the WebSocket's binary type to ArrayBuffer to handle binary data
 socket.binaryType = 'arraybuffer';
