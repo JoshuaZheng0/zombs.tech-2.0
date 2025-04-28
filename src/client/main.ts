@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { BufferGeometryUtils, PointerLockControls } from 'three/examples/jsm/Addons.js'
-import { JumpComponent, PositionComponent, FiringComponent, WASDComponent, DeltaTimeComponent, QuantizedAngleComponent, AngleComponent, MeshComponent, HealthComponent, AliveComponent, HitDetectionComponent, KillsComponent } from '../shared/interface';
+import { JumpComponent, PositionComponent, FiringComponent, WASDComponent, DeltaTimeComponent, QuantizedAngleComponent, AngleComponent, MeshComponent, HealthComponent, AliveComponent, HitDetectionComponent, KillsComponent } from '../shared/components';
 import { Entity } from '../shared/entity'
 import { World } from '../shared/world'
 import { wallMap } from '../shared/wall_map'
@@ -32,6 +32,13 @@ let respawnRequested = false;
 
 // Add at the top:
 let activeBullets: { mesh: THREE.Mesh, velocity: THREE.Vector3, life: number }[] = [];
+
+// Add at the top:
+let lastBulletTime = 0;
+const BULLET_FIRE_INTERVAL = 90; // ms
+const BULLET_SPEED = 2.5; // units per frame (faster)
+const BULLET_LIFETIME = 20; // frames (shorter)
+let isFiring = false;
 
 //_____________________GAME INITIALIZATION_____________________
 // Ensure the game world is initialized only after the page has fully loaded
@@ -401,24 +408,21 @@ function onMouseClick() {
   if (world.gameState.gameOver) {
     return;
   }
-
   if (!controls.isLocked) return;
-
   // Start shooting
   const firingComponent = world.getEntityById(1)?.getComponent(FiringComponent);
   if (firingComponent) {
     firingComponent.firing = true;
-    // Bullet animation (local only)
-    spawnBulletFromCamera();
+    isFiring = true;
   }
 }
 
 // Handle mouse up (stop shooting)
 function onMouseUp() {
-
   const firingComponent = world.getEntityById(1)?.getComponent(FiringComponent);
   if (firingComponent) {
     firingComponent.firing = false;
+    isFiring = false;
   }
 }
 
@@ -620,6 +624,15 @@ function animate(currentTime: number) {
     logAllEntities(world);
     renderEnemies(world);
     sendInput(); // Uncomment if necessary
+  }
+
+  // Bullet firing animation (continuous)
+  if (isFiring) {
+    const now = performance.now();
+    if (now - lastBulletTime > BULLET_FIRE_INTERVAL) {
+      spawnBulletFromCamera();
+      lastBulletTime = now;
+    }
   }
 
   // Render the scene
@@ -882,8 +895,7 @@ function spawnBulletFromCamera() {
   scene.add(bullet);
   // Direction: camera's forward
   const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
-  const speed = 1.2; // units per frame
-  activeBullets.push({ mesh: bullet, velocity: dir.multiplyScalar(speed), life: 40 }); // 40 frames
+  activeBullets.push({ mesh: bullet, velocity: dir.multiplyScalar(BULLET_SPEED), life: BULLET_LIFETIME });
 }
 
 

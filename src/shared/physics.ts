@@ -1,6 +1,6 @@
 import * as RAPIER from '@dimforge/rapier3d-compat';
 import { Entity } from './entity';
-import { PositionComponent, WASDComponent, JumpComponent, AngleComponent } from './interface';
+import { PositionComponent, WASDComponent, JumpComponent, AngleComponent } from './components';
 import { World } from './world';
 import { wallMap } from './wall_map';
 
@@ -55,6 +55,7 @@ export class PhysicsSystem {
           const wallHeight = Math.random() * 1.5 + 4.5; // Same height as in createTerrain
           const wallColliderDesc = RAPIER.ColliderDesc.cuboid(0.5, wallHeight / 2, 0.5);
           wallColliderDesc.setTranslation(worldX, wallHeight / 2, worldZ);
+          wallColliderDesc.setFriction(0.01); // Low friction for easy sliding
          
           const wallCollider = this.world.createCollider(wallColliderDesc);
           this.wallColliders.push(wallCollider);
@@ -117,6 +118,7 @@ export class PhysicsSystem {
     // Create a taller capsule collider for the player (radius, half-height)
     // Total height is 2.0 units, with radius 0.5, so half-height is 1.0
     const colliderDesc = RAPIER.ColliderDesc.capsule(0.5, 1.0);
+    colliderDesc.setFriction(0.01); // Low friction for player
     this.playerCollider = this.world.createCollider(colliderDesc, this.playerBody);
    
     // Create a character controller for better movement and climbing

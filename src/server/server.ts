@@ -1,5 +1,5 @@
 import { WebSocketServer, WebSocket } from 'ws';
-import { JumpComponent, PositionComponent, FiringComponent, WASDComponent, DeltaTimeComponent, QuantizedAngleComponent, WebSocketComponent, AliveComponent, HitDetectionComponent, HealthComponent, KillsComponent, HealthChangedComponent, PositionChangedComponent, AngleChangedComponent, KillsChangedComponent } from '../shared/interface';
+import { JumpComponent, PositionComponent, FiringComponent, WASDComponent, DeltaTimeComponent, QuantizedAngleComponent, WebSocketComponent, AliveComponent, HitDetectionComponent, HealthComponent, KillsComponent, HealthChangedComponent, PositionChangedComponent, AngleChangedComponent, KillsChangedComponent } from '../shared/components';
 import { Entity } from '../shared/entity';
 import { World } from '../shared/world';
 import * as THREE from 'three'; // Add at the top for vector math
