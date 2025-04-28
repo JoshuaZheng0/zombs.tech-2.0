@@ -17,6 +17,14 @@
   </head>
   <body>
     <div id="app"></div>
+    <div id="crosshair" style="position:fixed;left:50vw;top:50vh;width:32px;height:32px;z-index:999;pointer-events:none;transform:translate(-50%,-50%);">
+      <div style="position:absolute;left:15px;top:0;width:2px;height:32px;background:#fff;opacity:0.8;"></div>
+      <div style="position:absolute;left:0;top:15px;width:32px;height:2px;background:#fff;opacity:0.8;"></div>
+    </div>
+    <div id="death-screen" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.85);z-index:1000;justify-content:center;align-items:center;color:white;font-size:3em;font-family:sans-serif;text-align:center;flex-direction:column;">
+      <div>You Died</div>
+      <div style="font-size:0.5em;margin-top:1em;">Press F5 to restart</div>
+    </div>
     <script type="module" src="./main.ts"></script>
   </body>
 </html> 

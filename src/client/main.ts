@@ -15,6 +15,7 @@ let scene: THREE.Scene; // The main 3D scene where all objects are added
 let renderer: THREE.WebGLRenderer; // Renders the scene using WebGL
 let camera: THREE.PerspectiveCamera; // Perspective camera used for 3D rendering
 let physicsSystem: PhysicsSystem; // Rapier physics system
+let debugBitmask = false;
 
 // Add variables to track camera rotation
 let currentCameraQuaternion = new THREE.Quaternion(); // The current rotation of the camera, used for interpolation
@@ -23,6 +24,14 @@ let cameraRotationSpeed = .1; // Adjust this value to control rotation smoothnes
 
 //variables that don't need to be recreated every frame
 let direction = new THREE.Vector3();;
+
+// Add at the top:
+let playerOriginalColor: THREE.Color | null = null;
+let playerHalfHealthApplied = false;
+let respawnRequested = false;
+
+// Add at the top:
+let activeBullets: { mesh: THREE.Mesh, velocity: THREE.Vector3, life: number }[] = [];
 
 //_____________________GAME INITIALIZATION_____________________
 // Ensure the game world is initialized only after the page has fully loaded
@@ -44,25 +53,25 @@ function initWorld() {
   // 1. Create the world instance
   world = new World();
 
-  // 2. Create entities
-  const player = setupPlayer(camera);
-
-  // 3. Add entities to the world
-  world.addEntity(player);
-
-  // 4. Initialize physics system
-  physicsSystem = new PhysicsSystem(world);
-  physicsSystem.initPlayer(player);
-
-  // 5. Set up environment (lighting, camera, etc.)
+  // 2. Set up environment (lighting, camera, etc.) FIRST!
   scene = new THREE.Scene()
   scene.background = new THREE.Color(0x87CEEB)
 
   setupLighting();
-  setupCamera();
+  setupCamera();      // <-- This must come before setupPlayer(camera)
   setupRenderer();
   createUI();
   createEnvironment();
+
+  // 3. Create entities
+  const player = setupPlayer(camera);
+
+  // 4. Add entities to the world
+  world.addEntity(player);
+
+  // 5. Initialize physics system
+  physicsSystem = new PhysicsSystem(world);
+  physicsSystem.initPlayer(player);
 
   // 6. Set up event listeners
   window.addEventListener('resize', onWindowResize);
@@ -72,7 +81,7 @@ function initWorld() {
 
 //_____________________WEBSOCKET SETUP_____________________
 // Create a WebSocket connection to the server
-const socket = new WebSocket('ws://localhost:3000');
+const socket = new WebSocket(`ws://localhost:3000`);
 //const socket = new WebSocket('wss://e51b-129-2-89-62.ngrok-free.app');
 
 // Set the WebSocket's binary type to ArrayBuffer to handle binary data
@@ -101,11 +110,10 @@ socket.onerror = (error) => {
 
 // player setup
 function setupPlayer(camera: THREE.Camera): Entity {
-  // Create ECS player entity
-  const player = new Entity(1); // You can use a global ID generator if needed
+  const player = new Entity(1);
 
   // Attach components
-  player.addComponent(new PositionComponent(0, 1.6, 0)); // Set initial height to 1.6
+  player.addComponent(new PositionComponent(0,1.6,0)); // Unique spawn
   player.addComponent(new WASDComponent(false, false, false, false));
   player.addComponent(new JumpComponent(false));
   player.addComponent(new FiringComponent(false));
@@ -400,6 +408,8 @@ function onMouseClick() {
   const firingComponent = world.getEntityById(1)?.getComponent(FiringComponent);
   if (firingComponent) {
     firingComponent.firing = true;
+    // Bullet animation (local only)
+    spawnBulletFromCamera();
   }
 }
 
@@ -492,6 +502,7 @@ function renderEnemies(world: World): void {
     const position = entity.getComponent(PositionComponent);
     const angle = entity.getComponent(QuantizedAngleComponent);
     const mesh = entity.getComponent(MeshComponent);
+    const alive = entity.getComponent(AliveComponent)?.alive;
 
     if (position && angle && mesh) {
       // === LERP Position ===
@@ -505,6 +516,14 @@ function renderEnemies(world: World): void {
       // === SLERP Rotation ===
       const targetQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(-pitch, yaw, 0, 'YXZ'));
       mesh.mesh.quaternion.slerp(targetQuat, 0.1); // smooth rotation
+
+      // Show dead enemies as gray
+      if (mesh.mesh.material) {
+        const mat = mesh.mesh.material as THREE.MeshStandardMaterial;
+        if (alive === false) {
+          mat.color.set('#888888');
+        }
+      }
     }
   }
 }
@@ -529,13 +548,73 @@ function animate(currentTime: number) {
   const time = world.getEntityById(1)?.getComponent(DeltaTimeComponent);
   if (time) time.deltaTime = deltaTime;
 
-  if (!world.gameState.gameOver && controls.isLocked) {
-    const player = world.getEntityById(1);
-    if (!player) return;
+  // --- DEATH SCREEN, RESPAWN, & PLAYER APPEARANCE ---
+  const player = world.getEntityById(1);
+  const health = player?.getComponent(HealthComponent)?.health;
+  const alive = player?.getComponent(AliveComponent)?.alive;
+  const meshComp = player?.getComponent(MeshComponent);
 
+  // Handle respawn
+  if (respawnRequested && player) {
+    // Move to a new random spawn
+    const spawnPositions = [
+      { x: 0, y: 1.6, z: 0 },
+      { x: 0, y: 1.6, z: -5 },
+      { x: 5, y: 1.6, z: 0 },
+      { x: -5, y: 1.6, z: 0 },
+      { x: 0, y: 1.6, z: 5 },
+      { x: 5, y: 1.6, z: 5 },
+      { x: -5, y: 1.6, z: -5 },
+      { x: 5, y: 1.6, z: -5 },
+      { x: -5, y: 1.6, z: 5 },
+    ];
+    const spawn = spawnPositions[Math.floor(Math.random() * spawnPositions.length)];
+    const pos = player.getComponent(PositionComponent);
+    if (pos) {
+      pos.x = spawn.x;
+      pos.y = spawn.y;
+      pos.z = spawn.z;
+    }
+    // Restore health and alive
+    const healthComp = player.getComponent(HealthComponent);
+    if (healthComp) healthComp.health = 100;
+    const aliveComp = player.getComponent(AliveComponent);
+    if (aliveComp) aliveComp.alive = true;
+    respawnRequested = false;
+    hideDeathScreen();
+  }
+
+  // Show/hide death screen
+  if (alive === false || (typeof health === 'number' && health <= 0)) {
+    console.log('[DEBUG] Showing death screen');
+    showDeathScreen();
+    world.gameState.gameOver = true;
+  } else {
+    hideDeathScreen();
+    world.gameState.gameOver = false;
+  }
+
+  // Change player color at half health
+  if (meshComp && meshComp.mesh && meshComp.mesh.material) {
+    const mat = meshComp.mesh.material as THREE.MeshStandardMaterial;
+    if (alive === false || (typeof health === 'number' && health <= 0)) {
+      mat.color.set('#888888'); // Gray for dead
+    } else if (typeof health === 'number' && health <= 50 && !playerHalfHealthApplied) {
+      if (!playerOriginalColor) playerOriginalColor = mat.color.clone();
+      mat.color.set('#b22222'); // Firebrick red for low health
+      playerHalfHealthApplied = true;
+    } else if (typeof health === 'number' && health > 50 && playerHalfHealthApplied) {
+      if (playerOriginalColor) mat.color.copy(playerOriginalColor);
+      playerHalfHealthApplied = false;
+    } else if (typeof health === 'number' && health > 0 && playerOriginalColor) {
+      mat.color.copy(playerOriginalColor);
+    }
+  }
+
+  if (!world.gameState.gameOver && controls.isLocked) {
+    if (!player) return;
     // Update physics
     physicsSystem.update(deltaTime);
-
     // Update movement and camera
     updateMovement(player, deltaTime);
     logAllEntities(world);
@@ -546,6 +625,16 @@ function animate(currentTime: number) {
   // Render the scene
   renderer.render(scene, camera);
 
+  // Animate bullets
+  for (let i = activeBullets.length - 1; i >= 0; i--) {
+    const bullet = activeBullets[i];
+    bullet.mesh.position.add(bullet.velocity);
+    bullet.life--;
+    if (bullet.life <= 0) {
+      scene.remove(bullet.mesh);
+      activeBullets.splice(i, 1);
+    }
+  }
 }
 
 function logAllEntities(world: World): void {
@@ -642,7 +731,7 @@ function encodeInputFromEntity(player: Entity): ArrayBuffer {
 
 function decodeWorldData(buffer: ArrayBuffer, world: World): void {
   const view = new DataView(buffer);
-
+  console.log(`[DEBUG] arraybuffer length: ${buffer.byteLength}`);
   // Read the bitmask from the first byte
   let bitmask = view.getUint8(0);
   let offset = 1;
@@ -672,6 +761,9 @@ function decodeWorldData(buffer: ArrayBuffer, world: World): void {
       const positionChanged = (enemyBitmask & (1 << 3)) !== 0;
       const rotationChanged = (enemyBitmask & (1 << 4)) !== 0;
       const healthChanged = (enemyBitmask & (1 << 5)) !== 0;
+      if(debugBitmask){
+        console.log(`[DEBUG] Enemy ${enemy?.id}, alive: ${alive}, hitDetection: ${hitDetection}, firing: ${firing}, positionChanged: ${positionChanged}, rotationChanged: ${rotationChanged}, healthChanged: ${healthChanged}`);
+      }
 
       enemy?.addComponent(new AliveComponent(alive));
       enemy?.addComponent(new HitDetectionComponent(hitDetection));
@@ -708,9 +800,8 @@ function decodeWorldData(buffer: ArrayBuffer, world: World): void {
   const player = world.getEntityById(1);
   if (player) {
     const remaining = buffer.byteLength - offset;
-
+    let healthComponent = player.getComponent(HealthComponent);
     if (remaining === 1) {
-      const healthComponent = player.getComponent(HealthComponent);
       if (healthComponent) {
         healthComponent.health = view.getUint8(offset);
         offset += 1;
@@ -722,17 +813,21 @@ function decodeWorldData(buffer: ArrayBuffer, world: World): void {
         offset += 2;
       }
     } else if (remaining === 3) {
-      const healthComponent = player.getComponent(HealthComponent);
       if (healthComponent) {
         healthComponent.health = view.getUint8(offset);
         offset += 1;
       }
-
       const killsComponent = player.getComponent(KillsComponent);
       if (killsComponent) {
         killsComponent.kills = view.getUint16(offset, true);
         offset += 2;
       }
+    }
+    // Ensure AliveComponent is updated based on health
+    healthComponent = player.getComponent(HealthComponent); // re-fetch in case it was just set
+    const aliveComponent = player.getComponent(AliveComponent);
+    if (aliveComponent && healthComponent && typeof healthComponent.health === 'number') {
+      aliveComponent.alive = healthComponent.health > 0;
     }
   }
 
@@ -749,6 +844,47 @@ window.addEventListener('beforeunload', () => {
     physicsSystem.cleanup();
   }
 });
+
+// Update the death screen HTML to include a respawn button
+// (This is done in index.html, but we will also update it here in case of dynamic creation)
+function showDeathScreen() {
+  const deathScreen = document.getElementById('death-screen');
+  if (deathScreen) {
+    deathScreen.style.display = 'flex';
+    if (!document.getElementById('respawn-btn')) {
+      const btn = document.createElement('button');
+      btn.id = 'respawn-btn';
+      btn.textContent = 'Respawn';
+      btn.style.marginTop = '2em';
+      btn.style.fontSize = '1em';
+      btn.onclick = () => {
+        respawnRequested = true;
+        deathScreen.style.display = 'none';
+      };
+      deathScreen.appendChild(btn);
+    }
+  }
+}
+function hideDeathScreen() {
+  const deathScreen = document.getElementById('death-screen');
+  if (deathScreen) deathScreen.style.display = 'none';
+}
+
+// Add bullet spawn function
+function spawnBulletFromCamera() {
+  if (!camera) return;
+  // Bullet geometry and material
+  const geometry = new THREE.SphereGeometry(0.07, 8, 8);
+  const material = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+  const bullet = new THREE.Mesh(geometry, material);
+  // Start at camera position
+  bullet.position.copy(camera.position);
+  scene.add(bullet);
+  // Direction: camera's forward
+  const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
+  const speed = 1.2; // units per frame
+  activeBullets.push({ mesh: bullet, velocity: dir.multiplyScalar(speed), life: 40 }); // 40 frames
+}
 
 
 
