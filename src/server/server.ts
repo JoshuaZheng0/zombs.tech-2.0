@@ -39,7 +39,6 @@ wss.on('connection', (ws: WebSocket) => {
 
   // Handle incoming messages from the client
   ws.on('message', (message: Buffer) => {
-
     //decode input from client
     decodeInputToEntity(message, player);
 
@@ -56,6 +55,8 @@ wss.on('connection', (ws: WebSocket) => {
     console.error(`Error with client ${id}:`, err);  // Log any error
   });
 });
+
+let debugInput = false;
 
 function decodeInputToEntity(buffer: Buffer, player: Entity) {
   const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
@@ -119,6 +120,9 @@ function decodeInputToEntity(buffer: Buffer, player: Entity) {
   player.addComponent(quantizedAngle);
   player.addComponent(position);
   player.addComponent(delta);
+  if (debugInput) {
+    console.log(`[DEBUG] Player ${player.id} decoded input, position: ${position.x},${position.y},${position.z}, quantizedAngle: ${quantizedAngle.qpitch},${quantizedAngle.qyaw}, wasd: ${wasd.forward},${wasd.backward},${wasd.left},${wasd.right}, jump: ${jump.jump}, firing: ${firing.firing}, deltaTime: ${delta.deltaTime}`);
+  }
 }
 
 // Helper: Convert QuantizedAngleComponent to direction vector
@@ -148,7 +152,7 @@ function rayIntersectsEntity(rayOrigin: THREE.Vector3, rayDir: THREE.Vector3, en
 }
 
 //____________ SERVER -> CLIENT ____________
-let debugRaytracing = false;
+let debugRaytracing = true;
 // Set an interval updates to clients every 60ms
 setInterval(() => {
   // --- HIT DETECTION & RAYTRACING ---
